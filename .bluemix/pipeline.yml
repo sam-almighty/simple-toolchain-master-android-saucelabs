@@ -1,0 +1,158 @@
+---
+stages:
+- name: BUILD - Fastlane (APK)
+  inputs:
+  - type: git
+    branch: master
+    service: ${APP_REPO}
+  triggers:
+  - type: stage
+  properties:
+  - name: gitPushUser
+    value: sam-almighty
+    type: text
+  - name: gitPushToken
+    value: d493a0f2ef2f8076ff53392e6bb445f631e28f19
+    type: text
+  - name: gitPushEmail
+    value: sam.almighty85@gmail.com
+    type: text
+  - name: apkGitPushUrl
+    value: https://$gitPushToken:x-oauth-basic@github.com/sam-almighty/sample-android-app master
+    type: text
+  jobs:
+  - name: Install Android SDK, Fastlane and build apk
+    type: builder
+    build_type: shell
+    script: |-
+      #!/bin/bash
+      export JAVA_HOME=/opt/IBM/java8
+      cd /home/pipeline
+
+      # Android sdk
+      wget https://dl.google.com/android/repository/sdk-tools-linux-3859397.zip
+      sudo apt-get install unzip
+      unzip /home/pipeline/sdk-tools-linux-3859397.zip
+      echo 'y' | /home/pipeline/tools/bin/sdkmanager --licenses
+      echo 'y' | /home/pipeline/tools/bin/sdkmanager "platform-tools" "platforms;android-26"
+
+      # Prereq for installing Fastlane: Install RVM
+      gpg --keyserver hkp://keys.gnupg.net --recv-keys 409B6B1796C275462A1703113804BB82D39DC0E3 7D2BAF1CF37B13E2069D6956105BD0E739499BDB
+      \curl -L https://get.rvm.io | bash -s stable --ruby
+      source /home/pipeline/.rvm/scripts/rvm get stable --autolibs=enable
+      gem -v
+
+      # Install Fastlane
+      gem install fastlane -NV
+
+      # Build the apk file
+      cd /home/pipeline/$BUILD_ID
+      fastlane beta
+
+      cp ./app/build/outputs/apk/app-release-unsigned.apk .
+
+      # Push the generated apk for git hub for testing
+      git config --global user.name $gitPushUser
+      git config --global user.email $gitPushEmail
+      git add app-release-unsigned.apk
+      git commit -m "released a new version of apk - build : ($BUILD_ID)"
+      echo $apkGitPushUrl
+      git push $apkGitPushUrl
+- name: TEST - AppiumTestDroid
+  inputs:
+  - type: git
+    branch: master
+    service: ${SCRIPT_REPO}
+    dir_name: null
+  triggers:
+  - type: stage
+  properties:
+  - name: skipDatafile
+    value: 'true'
+    type: text
+  - name: absoluteurl
+    value: http://gsander.de:8080/appcenterconsole80/console.html
+    type: text
+  - name: username
+    value: demo
+    type: text
+  - name: password
+    value: demo4711
+    type: text
+  - name: uploadfile
+    value: /Users/vinod/AppCenterAppiumAutomation/AppCenterUIAutomation/src/main/resources/Hello.ipa
+    type: text
+  - name: context
+    value: appcenterconsole80
+    type: text
+  - name: mobcontext
+    value: applicationcenter80
+    type: text
+  - name: port
+    value: '8080'
+    type: text
+  - name: portocol
+    value: http
+    type: text
+  - name: hostname
+    value: gsander.de
+    type: text
+  - name: appcenterclientapppath
+    value: /home/pipeline/$BUILD_ID/target/classes/IBMAppCenterClient.apk
+    type: text
+  - name: screenshot_dir
+    value: /home/pipeline/home/pipeline/$BUILD_ID/target
+    type: text
+  - name: applicationPath
+    value: /home/pipeline/$BUILD_ID/appium/sample-scripts/java/src/test/resources/IBMAppCenterClient.apk
+    type: text
+  - name: executionType
+    value: clientside
+    type: text
+  - name: test
+    value: AndroidAppiumExampleTest
+    type: text
+  - name: bitbarApiKey
+    value: 4NzWsHfszhngAZ7iyFAq0gGISkgtrtlJ
+    type: text
+  jobs:
+  - name: Test the app using Appium scripts on Bitbar
+    type: builder
+    fail_stage: false
+    build_type: maven
+    script: |-
+      #!/bin/bash
+      cd /home/pipeline/$BUILD_ID/appium/sample-scripts/java
+      mvn clean install -X -Dtest=$test -DexecutionType=$executionType -DapiKey=$bitbarApiKey -DapplicationPath=$applicationPath
+- name: UPLOAD - Logs
+  triggers:
+  - type: stage
+  properties:
+  - name: gitUser
+    value: sam-almighty
+    type: text
+  - name: gitToken
+    value: d493a0f2ef2f8076ff53392e6bb445f631e28f19
+    type: text
+  - name: bitbarApiKey
+    value: '4NzWsHfszhngAZ7iyFAq0gGISkgtrtlJ:'
+    type: text
+  - name: bitbarAppiumClientSideProject
+    value: https://cloud.testdroid.com/api/me/projects/139316294/runs
+    type: text
+  - name: bitbarTestReportLocation
+    value: https://cloud.testdroid.com/#service/testrun/139316294/
+    type: text
+  - name: issueGitRepo
+    value: https://api.github.com/repos/sam-almighty/testdroid-samples/issues
+    type: text
+  jobs:
+  - name: LogsUpload
+    type: builder
+    artifact_dir: ''
+    build_type: shell
+    script: |-
+      testID=$(curl -H "Accept: application/json" -u $bitbarApiKey -X GET $bitbarAppiumClientSideProject | awk -F'[:]' '{print $3}' | awk -F'[,]' '{print $1}')
+      title="Test Results for build "$testID
+      body="Check the detail reports here : "$bitbarTestReportLocation$testID
+      curl -H "Content-Type: application/json" -H "Authorization: Bearer $gitToken" --include --request POST --data "{\"title\": \"$title\", \"body\": \"$body\"}" $issueGitRepo
